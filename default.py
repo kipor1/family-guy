@@ -1,107 +1,177 @@
-import urllib,urllib2,re,xbmcplugin,xbmcgui,os
+#!/usr/bin/python
+# -*- coding: utf-8 -*-
+import urllib,urllib2,re,xbmcplugin,xbmcgui,sys,xbmcaddon,base64,socket
 
-HEADER = 'Mozilla/5.0 (Windows; U; Windows NT 5.1; en-GB; rv:1.9.0.3) Gecko/2008092417 Firefox/3.0.3'
-BASE_PLUGIN_THUMBNAIL_PATH = os.path.join( os.getcwd(), "thumbnails" )
+socket.setdefaulttimeout(30)
+pluginhandle = int(sys.argv[1])
+xbox = xbmc.getCondVisibility("System.Platform.xbox")
+addon = xbmcaddon.Addon(id='plugin.video.famguy_de')
+translation = addon.getLocalizedString
 
-def ShowSeasons():
-	match=re.compile('<a href="(.+?)" title="family guy - Season .+?">(.+?)</a>').findall(OpenUrl('http://www.watch-family-guy-online.com/'))
-	for url,name in match:
-		li=xbmcgui.ListItem(name, iconImage=os.path.join( BASE_PLUGIN_THUMBNAIL_PATH, "dvdcover.jpg" ), thumbnailImage=os.path.join( BASE_PLUGIN_THUMBNAIL_PATH, "dvdcover.jpg" ))
-		u=sys.argv[0]+"?mode=1&name="+urllib.quote_plus(name)+"&url="+urllib.quote_plus(url)
-		xbmcplugin.addDirectoryItem(int(sys.argv[1]),u,li,True)
-		
-		       
-def ShowEpisodes(url):
-	match=re.compile('<td class=\'tdseason\'>\n<a href=\'(.+?)\'>\n<img  src=\'(.+?)\'.+?\n</a>\n(.+?)\n-\n<strong><b>\n(.+?)<br />\n</b></strong>').findall(OpenUrl(url))
-	for url,thumb,epnum,name in match:
-		li=xbmcgui.ListItem(epnum+" - "+name, iconImage=thumb, thumbnailImage=thumb)
-		li.setInfo( type="Video", infoLabels={ "Title": epnum+" - "+name } )
-		u=sys.argv[0]+"?mode=2&name="+urllib.quote_plus(epnum+" - "+name)+"&url="+urllib.quote_plus('http://www.watch-family-guy-online.com/'+url)
-		xbmcplugin.addDirectoryItem(int(sys.argv[1]),u,li)
+language=addon.getSetting("language")
+forceViewMode=addon.getSetting("forceViewMode")
+if forceViewMode=="true":
+  forceViewMode=True
+else:
+  forceViewMode=False
+viewMode=str(addon.getSetting("viewMode"))
 
+if language=="0":
+  language=""
+elif language=="1":
+  language="en"
 
-def PlayVideo(url,name):
-	link=OpenUrl(url)
-	if "4shared" in link:
-		print "Found: 4shared"
-		match=re.compile('<embed src="http\://www.4shared.com//flash/player.swf\?file=(.+?)" width="590" height="430" allowfullscreen="true" allowscriptaccess="always"></embed>').findall(link)
-		XBMCPlay(str(match[0]))
-	elif "novamov" in link:
-		print "Found: novamov"
-		match=re.compile('<iframe style=\'overflow: hidden; border: 0; width: 590px; height: 430px; margin-top: 0px;\' src=\'(.+?)\' scrolling=\'no\'></iframe>').findall(link)
-		match=re.compile('s1.addVariable\("file","(.+?)"\)').findall(OpenUrl(str(match[0])))
-		XBMCPlay(str(match[0]))
+def index():
+        addLink(translation(30003),"",'playRandom',"","")
+        content = getUrl("www.watch-family-guy-online.com")
+        content = content[content.find('content_epfinder'):]
+        content = content[:content.find('content_carouselwrap')]
+        match=re.compile('data-promoId="(.+?)"', re.DOTALL).findall(content)
+        promoId=match[0]
+        match=re.compile('href="(.+?)">(.+?)</a>', re.DOTALL).findall(content)
+        for url, staffel in match:
+          if url.find("/random")==-1:
+            addDir(str(translation(30001))+" "+staffel,"http://www.southpark.de/feeds/full-episode/carousel/"+staffel+"/"+promoId,'listVideos',"")
+        xbmcplugin.endOfDirectory(pluginhandle)
+        if forceViewMode==True:
+          xbmc.executebuiltin('Container.SetViewMode('+viewMode+')')
 
+def playRandom():
+        playlist = xbmc.PlayList(xbmc.PLAYLIST_VIDEO)
+        playlist.clear()
+        i=1
+        for i in range(1,100,1):
+          if xbox==True:
+            url="plugin://video/famguy.de/?url=http://www.watch-family-guy-online.de/alle-episoden/random&mode=playVideo"
+          else:
+            url="plugin://plugin.video.southpark_de/?url=http://www.southpark.de/alle-episoden/random&mode=playVideo"
+          listitem = xbmcgui.ListItem("South Park: "+translation(30003)+" "+str(i))
+          i=i+1
+          playlist.add(url,listitem)
 
-def XBMCPlay(url):
-	g_thumbnail = xbmc.getInfoImage( "ListItem.Thumb" )
-	liz=xbmcgui.ListItem(name, iconImage="DefaultVideo.png", thumbnailImage=g_thumbnail)
-	liz.setInfo( type="Video", infoLabels={ "Title": name } )
-	xbmc.Player().play(url,liz)
+def listVideos(url):
+        xbmcplugin.addSortMethod(pluginhandle, xbmcplugin.SORT_METHOD_LABEL)
+        content = getUrl(url)
+        spl=content.split('title:')
+        for i in range(1,len(spl),1):
+            entry=spl[i]
+            match=re.compile("'(.+?)',", re.DOTALL).findall(entry)
+            title=match[0]
+            title=cleanTitle(title)
+            match=re.compile("episodenumber:'(.+?)'", re.DOTALL).findall(entry)
+            episode=match[0]
+            nr="S"+episode[0:2]+"E"+episode[2:4]
+            match=re.compile("description:'(.+?)'", re.DOTALL).findall(entry)
+            desc=match[0]
+            match=re.compile("url:'(.+?)'", re.DOTALL).findall(entry)
+            url=match[0]
+            match=re.compile("thumbnail:'(.+?)'", re.DOTALL).findall(entry)
+            thumb=match[0]
+            thumb=thumb[:thumb.find("?")]
+            addLink(nr+" - "+title,url,'playVideo',thumb,desc)
+        xbmcplugin.endOfDirectory(pluginhandle)
+        if forceViewMode==True:
+          xbmc.executebuiltin('Container.SetViewMode('+viewMode+')')
 
+def playVideo(url):
+        content = getUrl(url)
+        matchTitle=re.compile('<h1>(.+?)</h1>', re.DOTALL).findall(content)
+        matchDesc=re.compile('<h2>(.+?)</h2>', re.DOTALL).findall(content)
+        match=re.compile('http://vidbull.com/?op=catalogue&k=family-guy&ftype=&fsize_logic=gt&fsize=.de:(.+?)"', re.DOTALL).findall(content)
+        if len(match)>0:
+          content = getUrl("http://www.southpark.de/feeds/video-player/mrss/mgid%3Aarc%3Aepisode%3Afamilyguy.de%3A"+match[0]+"?lang="+language)
+          spl=content.split('<item>')
+          urlFull="stack://"
+          for i in range(1,len(spl),1):
+              entry=spl[i]
+              match=re.compile('<media:content type="text/xml" medium="video" duration="(.+?)" isDefault="true" url="(.+?)"', re.DOTALL).findall(entry)
+              url=match[0][1].replace("&amp;","&")
+              content = getUrl(url)
+              matchMp4=re.compile('width="(.+?)" height="(.+?)" type="video/mp4" bitrate="(.+?)">(.+?)<src>(.+?)</src>', re.DOTALL).findall(content)
+              matchFlv=re.compile('width="(.+?)" height="(.+?)" type="video/x-flv" bitrate="(.+?)">(.+?)<src>(.+?)</src>', re.DOTALL).findall(content)
+              urlNew=""
+              bitrate=0
+              if len(matchMp4)>0:
+                match=matchMp4
+              elif len(matchFlv)>0:
+                match=matchFlv
+              for temp1,temp2,br,temp3,url in match:
+                if int(br)>bitrate:
+                  bitrate=int(br)
+                  urlNew=url
+                  if urlNew.find("/mtvnorigin/")>=0:
+                    urlNew="http://mtvni.rd.llnwd.net/44620"+urlNew[urlNew.find("/mtvnorigin/"):]
+                  elif urlNew.find("/mtviestor/")>=0:
+                    urlNew="http://mtvni.rd.llnwd.net/44620/cdnorigin"+urlNew[urlNew.find("/mtviestor/"):]
+              urlFull+=urlNew+" , "
+          urlFull=urlFull[:-3]
+          listitem = xbmcgui.ListItem(path=urlFull)
+          title=matchTitle[0]
+          if title.find("South Park: ")==-1:
+            title="South Park: "+title
+          desc=matchDesc[0]
+          listitem.setInfo( type="Video", infoLabels={ "Title": title , "Plot": desc } )
+          return xbmcplugin.setResolvedUrl(pluginhandle, True, listitem)
+        else:
+          xbmc.executebuiltin('XBMC.Notification(Info:,'+str(translation(30004))+'!,5000)')
 
-def OpenUrl(url):
-	req = urllib2.Request(url)
-	req.add_header('User-Agent', HEADER)
-	response = urllib2.urlopen(req)
-	link=response.read()
-	response.close()     
-	return link
+def cleanTitle(title):
+        title=title.replace("&lt;","<").replace("&gt;",">").replace("&amp;","&").replace("&#039;","\\").replace("&quot;","\"").replace("&szlig;","ß").replace("&ndash;","-")
+        title=title.replace("&Auml;","Ä").replace("&Uuml;","Ü").replace("&Ouml;","Ö").replace("&auml;","ä").replace("&uuml;","ü").replace("&ouml;","ö")
+        title=title.replace("\\'","'").strip()
+        return title
 
+def getUrl(url):
+        req = urllib2.Request(url)
+        req.add_header('User-Agent', 'Mozilla/5.0 (Windows NT 6.1; rv:15.0) Gecko/20100101 Firefox/15.0.1')
+        response = urllib2.urlopen(req)
+        link=response.read()
+        response.close()
+        return link
 
-def get_params():
-	param=[]
-	paramstring=sys.argv[2]
-	if len(paramstring)>=2:
-		params=sys.argv[2]
-		cleanedparams=params.replace('?','')
-		if (params[len(params)-1]=='/'):
-			params=params[0:len(params)-2]
-		pairsofparams=cleanedparams.split('&')
-		param={}
-		for i in range(len(pairsofparams)):
-			splitparams={}
-			splitparams=pairsofparams[i].split('=')
-			if (len(splitparams))==2:
-				param[splitparams[0]]=splitparams[1]
-				
-	return param
-	
-	      
-params=get_params()
-url=None
-name=None
-mode=None
+def parameters_string_to_dict(parameters):
+        ''' Convert parameters encoded in a URL to a dict. '''
+        paramDict = {}
+        if parameters:
+            paramPairs = parameters[1:].split("&")
+            for paramsPair in paramPairs:
+                paramSplits = paramsPair.split('=')
+                if (len(paramSplits)) == 2:
+                    paramDict[paramSplits[0]] = paramSplits[1]
+        return paramDict
 
-try:
-	url=urllib.unquote_plus(params["url"])
-except:
-	pass
-try:
-	name=urllib.unquote_plus(params["name"])
-except:
-	pass
-try:
-	mode=int(params["mode"])
-except:
-	pass
+def addLink(name,url,mode,iconimage,desc):
+        u=sys.argv[0]+"?url="+urllib.quote_plus(url)+"&mode="+str(mode)
+        ok=True
+        liz=xbmcgui.ListItem(name, iconImage="DefaultVideo.png", thumbnailImage=iconimage)
+        liz.setInfo( type="Video", infoLabels={ "Title": name , "Plot": desc } )
+        liz.setProperty('IsPlayable', 'true')
+        ok=xbmcplugin.addDirectoryItem(handle=int(sys.argv[1]),url=u,listitem=liz)
+        return ok
 
-print "Mode: "+str(mode)
-print "URL: "+str(url)
-print "Name: "+str(name)
+def addDir(name,url,mode,iconimage):
+        u=sys.argv[0]+"?url="+urllib.quote_plus(url)+"&mode="+str(mode)
+        ok=True
+        liz=xbmcgui.ListItem(name, iconImage="DefaultFolder.png", thumbnailImage=iconimage)
+        liz.setInfo( type="Video", infoLabels={ "Title": name } )
+        ok=xbmcplugin.addDirectoryItem(handle=int(sys.argv[1]),url=u,listitem=liz,isFolder=True)
+        return ok
+         
+params=parameters_string_to_dict(sys.argv[2])
+mode=params.get('mode')
+url=params.get('url')
+if type(url)==type(str()):
+  url=urllib.unquote_plus(url)
 
-if mode==None or url==None or len(url)<1:
-	print ""
-	ShowSeasons()
-       
-elif mode==1:
-	print ""+url
-	ShowEpisodes(url)
-	
-elif mode==2:
-	print ""+url
-	PlayVideo(url,name)
-
-
-
-xbmcplugin.endOfDirectory(int(sys.argv[1]))
+if mode == 'listVideos':
+    listVideos(url)
+elif mode == 'sortDirection':
+    sortDirection(url)
+elif mode == 'playVideo':
+    playVideo(url)
+elif mode == 'search':
+    search()
+elif mode == 'playRandom':
+    playRandom()
+else:
+    index()
